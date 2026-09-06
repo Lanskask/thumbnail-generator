@@ -1,0 +1,73 @@
+[tool.poetry]
+name = "little-gcp-project"
+version = "0.1.0"
+description = "Thumbnail Generator (GCP Always Free tier) — Cloud Functions, Terraform infra, and test suite"
+authors = ["flowerkitten400 <flowerkitten400@gmail.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+functions-framework = "^3.0"
+cloudevents = "^1.0"
+google-cloud-storage = "^2.0"
+Pillow = "^10.0"
+flask = "^3.0"
+requests = "^2.31"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+mypy = "^1.11"
+ruff = "^0.6"
+types-requests = "^2.31"
+types-Pillow = "^10.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: exercises a real deployed GCP project (network + billable calls); excluded from `make test-unit`",
+]
+
+# ---------------------------------------------------------------------------
+# mypy — matches the strictness already documented in README.md for the
+# Cloud Function sources, applied repo-wide.
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# ---------------------------------------------------------------------------
+# Ruff — linting + formatting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "ANN", # flake8-annotations (enforces type hints on defs)
+]
+ignore = [
+    "ANN101", # missing type for `self` — not needed
+    "ANN102", # missing type for `cls` — not needed
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/unit/*" = ["ANN"]  # test bodies use pytest fixtures typed at signature level already
