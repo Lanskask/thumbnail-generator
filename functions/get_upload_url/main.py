@@ -25,7 +25,10 @@ from datetime import timedelta
 from typing import Final
 
 import functions_framework
+import google.auth
+import google.auth.transport.requests
 from flask import Request, Response, jsonify
+from google.auth.credentials import Credentials
 from google.cloud import storage
 from google.cloud.storage import Blob, Bucket, Client
 
@@ -42,6 +45,37 @@ _ALLOWED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
 )
 
 storage_client: Client = storage.Client()
+
+# On Cloud Functions/Cloud Run, ADC resolves to compute_engine.Credentials,
+# which carries only a bearer token (no private key). google-cloud-storage's
+# V4 signing needs an actual key to sign with, so it can't do so directly
+# from these credentials -- it must instead be told to sign via IAM's
+# signBlob API, impersonating this function's own service account. That
+# requires the service account to hold roles/iam.serviceAccountTokenCreator
+# on itself (see terraform/iam.tf: upload_url_self_sign), and requires us to
+# pass service_account_email + a fresh access_token to generate_signed_url()
+# explicitly -- the client library will not infer this automatically.
+#
+# compute_engine.Credentials.service_account_email starts out as the literal
+# placeholder string "default" -- it's only resolved to the real email as a
+# side effect of calling refresh(), which fetches it from the metadata
+# server. So the email must be read *after* refresh(), not cached at import
+# time (that would freeze it at "default" and signBlob rejects that as an
+# invalid account id).
+# https://googleapis.dev/python/storage/latest/blobs.html#google.cloud.storage.blob.Blob.generate_signed_url
+_SIGNING_CREDENTIALS: Credentials
+_SIGNING_CREDENTIALS, _project = google.auth.default()
+
+
+def _signing_kwargs() -> dict[str, object]:
+    """Refresh the ADC token and return the extra kwargs V4 signing needs
+    when running under compute-engine-style credentials (no private key)."""
+    auth_request = google.auth.transport.requests.Request()
+    _SIGNING_CREDENTIALS.refresh(auth_request)
+    return {
+        "service_account_email": getattr(_SIGNING_CREDENTIALS, "service_account_email", None),
+        "access_token": _SIGNING_CREDENTIALS.token,
+    }
 
 
 def _cors_headers() -> dict[str, str]:
@@ -92,6 +126,7 @@ def _handle_upload(request: Request) -> Response:
         expiration=UPLOAD_URL_TTL,
         method="PUT",
         content_type=content_type,
+        **_signing_kwargs(),
     )
 
     return _json_response({"uploadUrl": upload_url, "objectName": object_name})
@@ -116,6 +151,7 @@ def _handle_download(request: Request) -> Response:
         version="v4",
         expiration=DOWNLOAD_URL_TTL,
         method="GET",
+        **_signing_kwargs(),
     )
     return _json_response({"exists": True, "downloadUrl": download_url})
 
