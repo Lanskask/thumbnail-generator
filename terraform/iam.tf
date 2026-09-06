@@ -52,15 +52,15 @@ resource "google_service_account_iam_member" "upload_url_self_sign" {
 # Eventarc (which the GCS trigger relies on under the hood) needs the
 # pubsub publisher role on the storage service agent.
 #
-# depends_on is required here: without it, Terraform can call
-# generateServiceIdentity for storage.googleapis.com before the API is
-# confirmed enabled on the project, which returns an empty ServiceIdentity
-# (email/member null) even though the resource "succeeds". See
-# https://github.com/hashicorp/terraform-provider-google/issues/18649.
-resource "google_project_service_identity" "gcs_sa" {
-  provider = google-beta
-  project  = var.project_id
-  service  = "storage.googleapis.com"
+# We use the google_storage_project_service_account *data source* rather
+# than the google_project_service_identity *resource* here: the latter has
+# a known provider bug where its email/member attributes come back empty
+# when the identity is created in the same apply as the API being enabled
+# (https://github.com/hashicorp/terraform-provider-google/issues/18649).
+# The data source instead directly calls GCS's own serviceAccount endpoint,
+# which reliably returns the service agent's email on every read.
+data "google_storage_project_service_account" "gcs_sa" {
+  project = var.project_id
 
   depends_on = [google_project_service.required]
 }
@@ -68,7 +68,33 @@ resource "google_project_service_identity" "gcs_sa" {
 resource "google_project_iam_member" "gcs_sa_pubsub_publisher" {
   project = var.project_id
   role    = "roles/pubsub.publisher"
-  member  = google_project_service_identity.gcs_sa.member
+  member  = "serviceAccount:${data.google_storage_project_service_account.gcs_sa.email_address}"
+}
+
+# Eventarc's GCS trigger path additionally requires the Pub/Sub service
+# agent to hold Token Creator *on itself*, so it can mint auth tokens when
+# delivering events to the underlying Cloud Run trigger. Without this,
+# `terraform apply` fails at trigger-creation time with:
+#   "Permission denied while using the Eventarc Service Agent"
+# even though eventarc.serviceAgent is already correctly bound (that role
+# alone is not sufficient for GCS-sourced triggers).
+# https://cloud.google.com/eventarc/docs/troubleshooting#trigger-permission-denied
+#
+# The Pub/Sub service agent's email follows Google's fixed, documented
+# service-agent naming convention, so it's built from the project number
+# directly rather than depending on a flaky google_project_service_identity
+# resource (see the comment on the GCS data source above for why that
+# resource is avoided elsewhere in this file).
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
+resource "google_project_iam_member" "pubsub_sa_token_creator" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountTokenCreator"
+  member  = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+
+  depends_on = [google_project_service.required]
 }
 
 # The event trigger's service account needs eventarc.eventReceiver at the

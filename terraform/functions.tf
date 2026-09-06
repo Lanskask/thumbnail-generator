@@ -44,6 +44,7 @@ resource "google_cloudfunctions2_function" "make_thumbnail" {
     google_project_service.required,
     google_project_iam_member.gcs_sa_pubsub_publisher,
     google_project_iam_member.make_thumbnail_event_receiver,
+    google_project_iam_member.pubsub_sa_token_creator,
   ]
 }
 
