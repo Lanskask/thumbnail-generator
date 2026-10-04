@@ -192,8 +192,8 @@ make cf-install                        # bun install in cloudflare/
 make cf-test                           # vitest (mocks R2 + Images) and tsc
 make cf-plan                           # bundle + terraform plan (read-only)
 make deploy DEPLOY_TARGET=cloudflare   # test, bundle, terraform apply
-make verify-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev
-make test-e2e-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev   # e2e against the live Worker
+make verify-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.physics-study-dashboards.workers.dev
+make test-e2e-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.physics-study-dashboards.workers.dev   # e2e against the live Worker
 make destroy-gcp CLOUDFLARE_URL=...    # DRY RUN of the GCP teardown; add APPLY=1 to really delete
 make destroy-cloudflare                # DRY RUN of terraform destroy for the Cloudflare side
 ```

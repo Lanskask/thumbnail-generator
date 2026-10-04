@@ -1,9 +1,7 @@
-.PHONY: help install test test-unit test-e2e test-e2e-cloudflare lint format typecheck check \
-        tf-init tf-plan tf-apply tf-destroy tf-output \
-        deploy deploy-gcp deploy-cloudflare cf-install cf-test cf-build cf-plan verify-cloudflare destroy-gcp destroy-cloudflare
+.PHONY: help install test test-unit test-e2e-cloudflare lint format typecheck check \
+        deploy deploy-cloudflare cf-install cf-test cf-build cf-plan verify-cloudflare destroy-cloudflare
 
-# Where `make deploy` ships to: gcp (default, Terraform) or cloudflare (Worker + R2 + Images binding).
-DEPLOY_TARGET ?= gcp
+DEPLOY_TARGET ?= cloudflare
 # Public URL of the Cloudflare copy (printed by `wrangler deploy`); used by verify/destroy guards.
 CLOUDFLARE_URL ?=
 export DEPLOY_TARGET CLOUDFLARE_URL
@@ -13,31 +11,23 @@ help:
 	@echo "  make install       Install all deps (Poetry)"
 	@echo ""
 	@echo "Tests:"
-	@echo "  make test-unit     Run unit tests only (no network, no GCP)"
-	@echo "  make test-e2e      Run e2e tests against the LIVE deployed project"
+	@echo "  make test-unit     Run unit tests only (no network)"
 	@echo "  make test-e2e-cloudflare  Run e2e tests against the Cloudflare Worker (needs CLOUDFLARE_URL=https://...)"
-	@echo "  make test          Run unit + e2e tests"
+	@echo "  make test          Run unit tests"
 	@echo ""
 	@echo "Code quality:"
 	@echo "  make lint          Ruff lint"
 	@echo "  make format        Ruff format (auto-fix)"
-	@echo "  make typecheck     mypy across functions/ and tests/"
+	@echo "  make typecheck     mypy across tests/"
 	@echo "  make check         lint + typecheck + test-unit"
 	@echo ""
-	@echo "Terraform (thin wrappers; you still review the plan yourself):"
-	@echo "  make tf-init       terraform init"
-	@echo "  make tf-plan       terraform plan"
-	@echo "  make tf-apply      terraform apply"
-	@echo "  make tf-destroy    terraform destroy"
-	@echo "  make tf-output     terraform output"
 	@echo ""
-	@echo "Deploy (DEPLOY_TARGET=gcp|cloudflare, default gcp):"
+	@echo "Deploy (DEPLOY_TARGET=cloudflare):"
 	@echo "  make deploy                          deploy to \$$(DEPLOY_TARGET)"
 	@echo "  make cf-install / cf-test / cf-build   install, test, bundle the Worker (cloudflare/, esbuild)"
 	@echo "  make cf-plan                         terraform plan for the Cloudflare resources (read-only)"
 	@echo "  make deploy DEPLOY_TARGET=cloudflare bundle, then terraform apply (creates the R2 bucket + Worker)"
 	@echo "  make verify-cloudflare CLOUDFLARE_URL=https://...   upload API answers"
-	@echo "  make destroy-gcp CLOUDFLARE_URL=...  DRY RUN of terraform destroy; add APPLY=1 to really delete"
 
 install:
 	poetry install
@@ -48,14 +38,12 @@ install:
 test-unit:
 	poetry run pytest tests/unit -v -m "not e2e"
 
-test-e2e:
-	poetry run pytest tests/e2e -v -m e2e
 
 test-e2e-cloudflare:
-	@test -n "$(CLOUDFLARE_URL)" || { echo "Set CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev (or a local wrangler dev URL)"; exit 1; }
+	@test -n "$(CLOUDFLARE_URL)" || { echo "Set CLOUDFLARE_URL=https://thumbnail-generator.physics-study-dashboards.workers.dev (or a local wrangler dev URL)"; exit 1; }
 	poetry run pytest tests/e2e/test_thumbnail_cloudflare.py -v -m e2e_cloudflare
 
-test: test-unit test-e2e
+test: test-unit
 
 # ---------------------------------------------------------------------------
 # Code quality
@@ -69,38 +57,20 @@ format:
 
 typecheck:
 	poetry run mypy --ignore-missing-imports --explicit-package-bases \
-		functions/make_thumbnail/main.py \
-		functions/get_upload_url/main.py \
 		tests
 
 check: lint typecheck test-unit
 
-# ---------------------------------------------------------------------------
-# Terraform (run from terraform/; these are convenience wrappers only —
-# always read the plan output yourself before typing "yes")
-# ---------------------------------------------------------------------------
-tf-init:
-	cd terraform && terraform init
 
-tf-plan:
-	cd terraform && terraform plan
 
-tf-apply:
-	cd terraform && terraform apply
 
-tf-destroy:
-	cd terraform && terraform destroy
 
-tf-output:
-	cd terraform && terraform output
 
 # ---------------------------------------------------------------------------
 # Deploy targets
 # ---------------------------------------------------------------------------
 deploy: deploy-$(DEPLOY_TARGET)
 
-deploy-gcp:
-	cd terraform && terraform apply
 
 cf-install:
 	cd cloudflare && bun install
@@ -120,12 +90,9 @@ deploy-cloudflare: cf-test cf-build
 	cd cloudflare/terraform && terraform init && terraform apply
 
 verify-cloudflare:
-	@test -n "$(CLOUDFLARE_URL)" || { echo "Set CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev"; exit 1; }
+	@test -n "$(CLOUDFLARE_URL)" || { echo "Set CLOUDFLARE_URL=https://thumbnail-generator.physics-study-dashboards.workers.dev"; exit 1; }
 	curl -fsS -X POST -H 'content-type: application/json' -d '{"filename":"a.png","contentType":"image/png"}' "$(CLOUDFLARE_URL)/api?action=upload"; echo
 
-# Delete the GCP functions/buckets via Terraform. Dry run unless APPLY=1.
-destroy-gcp:
-	@scripts/guard-destroy.sh gcp thumbnail-generator-2127 "cd terraform && terraform destroy"
 
 # Delete the Cloudflare Worker + R2 bucket (Terraform). Dry run unless APPLY=1.
 destroy-cloudflare:

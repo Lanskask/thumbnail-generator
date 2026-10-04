@@ -2,7 +2,8 @@
 End-to-end test against a *live* Cloudflare deployment (cloudflare/terraform).
 
 Set CLOUDFLARE_URL to the Worker's base URL, e.g.
-  CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev make test-e2e-cloudflare
+  CLOUDFLARE_URL=https://thumbnail-generator.physics-study-dashboards.workers.dev \
+    make test-e2e-cloudflare
 or to a local `wrangler dev` URL. Without it every test is skipped.
 
 Path exercised (same as the frontend):

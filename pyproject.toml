@@ -1,17 +1,13 @@
 [tool.poetry]
 name = "little-gcp-project"
 version = "0.1.0"
-description = "Thumbnail Generator (GCP Always Free tier) — Cloud Functions, Terraform infra, and test suite"
+description = "Thumbnail Generator on Cloudflare (Worker + R2 + Images binding); Python only runs the e2e tests"
 authors = ["flowerkitten400 <flowerkitten400@gmail.com>"]
 package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.12"
-functions-framework = "^3.0"
-cloudevents = "^1.0"
-google-cloud-storage = "^2.0"
 Pillow = "^10.0"
-flask = "^3.0"
 requests = "^2.31"
 
 [tool.poetry.group.dev.dependencies]
@@ -31,7 +27,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "e2e: exercises a real deployed GCP project (network + billable calls); excluded from `make test-unit`",
     "e2e_cloudflare: exercises a deployed Cloudflare Worker (set CLOUDFLARE_URL); excluded from `make test-unit`",
 ]
 
