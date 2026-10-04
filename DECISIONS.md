@@ -43,3 +43,8 @@
   2. R2 `put` rejected the Images response body ("readable stream must have a known length"). Fix: read it with
      `arrayBuffer()` first. A unit-test mock now rejects streams.
 - **Still unverified:** the real Images binding and real R2 (the local run simulates both); the first deploy is the proof.
+
+## GCP stack removed; README rewritten for Cloudflare only (2026-10-04)
+- **Requirement:** Cloudflare is the only target now; the GCP project was destroyed (`terraform state list` was empty before `terraform/` was deleted).
+- **Removed:** `terraform/`, `functions/`, `main.py`, `requirements.txt`, the GCP e2e/unit tests and the google/flask/cloudevents dependencies. Python stays only for the Cloudflare e2e tests.
+- **Measured after removal:** `make check` (ruff, mypy, 10 unit tests) passes; `make test-e2e-cloudflare` 11 passed against the live Worker.

@@ -2,7 +2,7 @@
         deploy deploy-cloudflare cf-install cf-test cf-build cf-plan verify-cloudflare destroy-cloudflare
 
 DEPLOY_TARGET ?= cloudflare
-# Public URL of the Cloudflare copy (printed by `wrangler deploy`); used by verify/destroy guards.
+# Public URL of the Cloudflare copy (see `terraform output url_hint`); used by verify/destroy guards.
 CLOUDFLARE_URL ?=
 export DEPLOY_TARGET CLOUDFLARE_URL
 
