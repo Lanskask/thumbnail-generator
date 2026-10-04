@@ -3,13 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "gen": "node scripts/gen-frontend.mjs",
+    "build": "bun run gen && esbuild src/index.ts --bundle --format=esm --target=es2022 --minify --outfile=build/index.js",
+    "test": "bun run gen && vitest run",
+    "typecheck": "bun run gen && tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261003.1",
     "typescript": "^5.6.0",
     "vitest": "^3.0.0",
-    "wrangler": "^4.0.0"
+    "esbuild": "^0.25.0"
   }
 }

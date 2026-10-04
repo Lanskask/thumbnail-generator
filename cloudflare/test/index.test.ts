@@ -25,7 +25,6 @@ function fakeEnv(opts: { exists?: boolean } = {}) {
         },
       }),
     },
-    ASSETS: {},
   } as unknown as Env;
   return { env, stored, transforms };
 }
@@ -92,5 +91,14 @@ describe("put -> download -> thumb", () => {
   it("does not serve non-thumb keys", async () => {
     const { env } = fakeEnv();
     expect((await handle(req("/api/thumb/secret"), env)).status).toBe(404);
+  });
+});
+
+describe("frontend", () => {
+  it("serves the bundled page at / with the API endpoint set to /api", async () => {
+    const { env } = fakeEnv();
+    const res = await handle(req("/"), env);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(await res.text()).toContain('const UPLOAD_FUNCTION_URL = "/api"');
   });
 });

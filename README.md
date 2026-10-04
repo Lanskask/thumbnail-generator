@@ -180,18 +180,21 @@ their contents, via `force_destroy`), and service accounts.
 
 ## Deploy targets (gcp or cloudflare)
 
-`make deploy` uses `DEPLOY_TARGET` (default `gcp`). The Cloudflare version lives in `cloudflare/`
-(TypeScript Worker + R2 bucket + Images binding, free plan; no Pillow, since Workers cannot run it).
-It keeps the same API shape, so the same `frontend/index.html` works (endpoint set to `/api`).
+`make deploy` uses `DEPLOY_TARGET` (default `gcp`). The Cloudflare version lives in `cloudflare/`:
+a TypeScript Worker (code in `src/`, bundled by esbuild) and Terraform (`cloudflare/terraform/`) that creates
+the R2 bucket, the Worker, its bindings (R2 + Images) and the deployment. No Pillow (Workers cannot run it): the
+Images binding does the resize. The upload page is bundled into the Worker, so there is no separate asset upload.
 
 ```
-make cf-install                       # bun install in cloudflare/
-make cf-test                          # vitest (mocks R2 + Images) and tsc
-bunx wrangler login                   # once (run in cloudflare/)
-make cf-setup                         # once: creates the R2 bucket
-make deploy DEPLOY_TARGET=cloudflare  # render frontend, test, wrangler deploy
+export CLOUDFLARE_API_TOKEN=...        # scoped token: Workers Scripts Edit + Workers R2 Storage Edit
+cp cloudflare/terraform/terraform.tfvars.example cloudflare/terraform/terraform.tfvars   # set account_id
+make cf-install                        # bun install in cloudflare/
+make cf-test                           # vitest (mocks R2 + Images) and tsc
+make cf-plan                           # bundle + terraform plan (read-only)
+make deploy DEPLOY_TARGET=cloudflare   # test, bundle, terraform apply
 make verify-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev
-make destroy-gcp CLOUDFLARE_URL=...   # DRY RUN of terraform destroy; add APPLY=1 to really delete
+make destroy-gcp CLOUDFLARE_URL=...    # DRY RUN of the GCP teardown; add APPLY=1 to really delete
+make destroy-cloudflare                # DRY RUN of terraform destroy for the Cloudflare side
 ```
 
 Free-tier limits that matter (official docs, read 2026-10-03): 5,000 unique image transformations per

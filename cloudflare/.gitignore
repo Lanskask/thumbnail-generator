@@ -1,3 +1,7 @@
 node_modules/
 .wrangler/
-public/index.html
+build/
+src/frontend.generated.ts
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/terraform.tfvars

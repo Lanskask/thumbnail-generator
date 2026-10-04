@@ -7,14 +7,17 @@
  *   GET  /api?action=download&objectName=<name> -> {"exists", "downloadUrl"}
  *   GET  /api/thumb/<thumbObjectName>  the thumbnail
  *
+ *   GET  / (or /index.html)            the upload page, bundled into the Worker (see scripts/gen-frontend.mjs)
+ *
  * Difference from GCP: the browser PUTs to the Worker (not to a signed bucket URL) and the
  * thumbnail is made in the same request, so there is one bucket and no event trigger.
  */
 
+import FRONTEND_HTML from "./frontend.generated";
+
 export interface Env {
   THUMBS: R2Bucket;
   IMAGES: ImagesBinding;
-  ASSETS: Fetcher;
 }
 
 export const THUMBNAIL_SIZE = 200;
@@ -104,6 +107,9 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   const path = url.pathname.replace(/\/+$/, "");
   const action = url.searchParams.get("action");
 
+  if ((path === "" || path === "/index.html") && request.method === "GET") {
+    return new Response(FRONTEND_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
   if (path === "/api" && action === "upload" && request.method === "POST") return handleUpload(request);
   if (path === "/api" && action === "download" && request.method === "GET") return handleDownload(url, env);
   if (path.startsWith("/api/put/") && request.method === "PUT") {

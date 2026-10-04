@@ -1,6 +1,6 @@
 .PHONY: help install test test-unit test-e2e lint format typecheck check \
         tf-init tf-plan tf-apply tf-destroy tf-output \
-        deploy deploy-gcp deploy-cloudflare cf-install cf-test cf-render-frontend cf-setup verify-cloudflare destroy-gcp
+        deploy deploy-gcp deploy-cloudflare cf-install cf-test cf-build cf-plan verify-cloudflare destroy-gcp destroy-cloudflare
 
 # Where `make deploy` ships to: gcp (default, Terraform) or cloudflare (Worker + R2 + Images binding).
 DEPLOY_TARGET ?= gcp
@@ -32,9 +32,9 @@ help:
 	@echo ""
 	@echo "Deploy (DEPLOY_TARGET=gcp|cloudflare, default gcp):"
 	@echo "  make deploy                          deploy to \$$(DEPLOY_TARGET)"
-	@echo "  make cf-install / cf-test            install / unit-test the Cloudflare Worker (cloudflare/)"
-	@echo "  make cf-setup                        one-time: create the R2 bucket (creates a cloud resource)"
-	@echo "  make deploy DEPLOY_TARGET=cloudflare render frontend and wrangler deploy"
+	@echo "  make cf-install / cf-test / cf-build   install, test, bundle the Worker (cloudflare/, esbuild)"
+	@echo "  make cf-plan                         terraform plan for the Cloudflare resources (read-only)"
+	@echo "  make deploy DEPLOY_TARGET=cloudflare bundle, then terraform apply (creates the R2 bucket + Worker)"
 	@echo "  make verify-cloudflare CLOUDFLARE_URL=https://...   upload API answers"
 	@echo "  make destroy-gcp CLOUDFLARE_URL=...  DRY RUN of terraform destroy; add APPLY=1 to really delete"
 
@@ -103,16 +103,16 @@ cf-install:
 cf-test:
 	cd cloudflare && bun run test && bun run typecheck
 
-# The page calls the Worker on the same origin, so its endpoint is just "/api".
-cf-render-frontend:
-	sed 's|__GET_UPLOAD_URL_ENDPOINT__|/api|' frontend/index.html > cloudflare/public/index.html
+# Terraform does not bundle TypeScript, so esbuild produces cloudflare/build/index.js first.
+cf-build:
+	cd cloudflare && bun run build
 
-# One-time. Creates a cloud resource (R2 bucket; free tier: 10 GB-month).
-cf-setup:
-	cd cloudflare && bunx wrangler r2 bucket create thumbnail-generator-thumbs
+cf-plan: cf-build
+	cd cloudflare/terraform && terraform init && terraform plan
 
-deploy-cloudflare: cf-render-frontend cf-test
-	cd cloudflare && bunx wrangler deploy
+# Needs CLOUDFLARE_API_TOKEN and cloudflare/terraform/terraform.tfvars (account_id). Creates cloud resources.
+deploy-cloudflare: cf-test cf-build
+	cd cloudflare/terraform && terraform init && terraform apply
 
 verify-cloudflare:
 	@test -n "$(CLOUDFLARE_URL)" || { echo "Set CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev"; exit 1; }
@@ -121,3 +121,7 @@ verify-cloudflare:
 # Delete the GCP functions/buckets via Terraform. Dry run unless APPLY=1.
 destroy-gcp:
 	@scripts/guard-destroy.sh gcp thumbnail-generator-2127 "cd terraform && terraform destroy"
+
+# Delete the Cloudflare Worker + R2 bucket (Terraform). Dry run unless APPLY=1.
+destroy-cloudflare:
+	@scripts/guard-destroy.sh cloudflare thumbnail-generator "cd cloudflare/terraform && terraform destroy"
