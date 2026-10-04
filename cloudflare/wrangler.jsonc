@@ -1,0 +1,14 @@
+{
+  // Worker = API (same shape as the GCP get-upload-url function) + R2 + Images binding.
+  // Static frontend comes from public/ (rendered by `make cf-render-frontend`).
+  "name": "thumbnail-generator",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api", "/api/*"]
+  },
+  "r2_buckets": [{ "binding": "THUMBS", "bucket_name": "thumbnail-generator-thumbs" }],
+  "images": { "binding": "IMAGES" }
+}

@@ -177,3 +177,22 @@ their contents, via `force_destroy`), and service accounts.
   filenames are sanitized before use as object names.
 - Raw uploads auto-delete after 7 days via a lifecycle rule, keeping storage
   usage (and therefore cost risk) bounded automatically.
+
+## Deploy targets (gcp or cloudflare)
+
+`make deploy` uses `DEPLOY_TARGET` (default `gcp`). The Cloudflare version lives in `cloudflare/`
+(TypeScript Worker + R2 bucket + Images binding, free plan; no Pillow, since Workers cannot run it).
+It keeps the same API shape, so the same `frontend/index.html` works (endpoint set to `/api`).
+
+```
+make cf-install                       # bun install in cloudflare/
+make cf-test                          # vitest (mocks R2 + Images) and tsc
+bunx wrangler login                   # once (run in cloudflare/)
+make cf-setup                         # once: creates the R2 bucket
+make deploy DEPLOY_TARGET=cloudflare  # render frontend, test, wrangler deploy
+make verify-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev
+make destroy-gcp CLOUDFLARE_URL=...   # DRY RUN of terraform destroy; add APPLY=1 to really delete
+```
+
+Free-tier limits that matter (official docs, read 2026-10-03): 5,000 unique image transformations per
+month (Images), 100,000 Worker requests/day, 10 GB R2 storage.
