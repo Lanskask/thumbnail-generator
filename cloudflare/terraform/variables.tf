@@ -20,3 +20,9 @@ variable "compatibility_date" {
   description = "Workers runtime compatibility date (was in wrangler.jsonc)."
   default     = "2026-10-01"
 }
+
+variable "thumbnail_ttl_days" {
+  type        = number
+  description = "Thumbnails are deleted this many days after upload (the GCP buckets used 7)."
+  default     = 7
+}

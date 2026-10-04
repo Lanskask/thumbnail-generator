@@ -28,3 +28,18 @@
   **Not verified:** `terraform plan/apply` (needs your API token and account ID), and everything from the earlier note
   about the real Images binding/R2 behaviour.
 - **Terraform state** is local (`terraform.tfstate`, gitignored), like the GCP one. Keep it until `destroy` finishes.
+
+## Cloudflare e2e test, R2 expiry, and two bugs it found (2026-10-04)
+- **Requirement:** an e2e test for the Cloudflare side, and the same 7-day expiry the GCP buckets had.
+- **Expiry:** `cloudflare_r2_bucket_lifecycle` deletes objects `thumbnail_ttl_days` (default 7) after upload. Both GCP buckets
+  (source and dest) used `age = 7`; the Cloudflare version has one bucket (no source copy is stored).
+- **E2E:** `tests/e2e/test_thumbnail_cloudflare.py` with marker `e2e_cloudflare` (kept apart from the GCP `e2e` marker),
+  helpers in `tests/common/cloudflare_client.py`. It skips unless `CLOUDFLARE_URL` is set.
+- **Measured (local `wrangler dev`, local R2 + local Images simulation, not Cloudflare's real services):** 11 passed.
+  Running it first failed and exposed two bugs that mocked unit tests could not see:
+  1. The bundle exported helper functions next to the default handler; the Workers runtime refuses any named export that
+     is not a handler ("Incorrect type for map entry 'MAX_UPLOAD_BYTES'"). The same bundle would have failed on the real
+     deploy. Fix: `src/worker.ts` exports only the default handler and is the esbuild entry.
+  2. R2 `put` rejected the Images response body ("readable stream must have a known length"). Fix: read it with
+     `arrayBuffer()` first. A unit-test mock now rejects streams.
+- **Still unverified:** the real Images binding and real R2 (the local run simulates both); the first deploy is the proof.

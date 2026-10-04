@@ -6,6 +6,24 @@ resource "cloudflare_r2_bucket" "thumbs" {
   name       = var.bucket_name
 }
 
+# Same housekeeping as the GCP buckets (lifecycle_rule age = 7): expire thumbnails after a week.
+resource "cloudflare_r2_bucket_lifecycle" "thumbs" {
+  account_id  = var.account_id
+  bucket_name = cloudflare_r2_bucket.thumbs.name
+
+  rules = [{
+    id         = "expire-thumbnails"
+    enabled    = true
+    conditions = { prefix = "" }
+    delete_objects_transition = {
+      condition = {
+        type    = "Age"
+        max_age = var.thumbnail_ttl_days * 24 * 60 * 60 # seconds
+      }
+    }
+  }]
+}
+
 resource "cloudflare_worker" "api" {
   account_id = var.account_id
   name       = var.worker_name

@@ -74,7 +74,9 @@ async function handlePut(request: Request, env: Env, objectName: string): Promis
     .transform({ width: THUMBNAIL_SIZE, height: THUMBNAIL_SIZE, fit: "scale-down" })
     .output({ format: OUTPUT_FORMAT[contentType] });
   const thumb = result.response();
-  await env.THUMBS.put(`${THUMBNAIL_PREFIX}${objectName}`, thumb.body, {
+  // R2 needs a body of known length; the Images response body is a stream of unknown length.
+  const thumbBytes = await thumb.arrayBuffer();
+  await env.THUMBS.put(`${THUMBNAIL_PREFIX}${objectName}`, thumbBytes, {
     httpMetadata: { contentType: thumb.headers.get("content-type") ?? OUTPUT_FORMAT[contentType] },
   });
   return new Response(null, { status: 200 });
@@ -121,4 +123,3 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   return json({ error: "unknown action or wrong method" }, 400);
 }
 
-export default { fetch: handle } satisfies ExportedHandler<Env>;

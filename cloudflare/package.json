@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "gen": "node scripts/gen-frontend.mjs",
-    "build": "bun run gen && esbuild src/index.ts --bundle --format=esm --target=es2022 --minify --outfile=build/index.js",
+    "build": "bun run gen && esbuild src/worker.ts --bundle --format=esm --target=es2022 --minify --outfile=build/index.js",
     "test": "bun run gen && vitest run",
     "typecheck": "bun run gen && tsc --noEmit"
   },

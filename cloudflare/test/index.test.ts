@@ -7,6 +7,8 @@ function fakeEnv(opts: { exists?: boolean } = {}) {
   const env = {
     THUMBS: {
       put: async (key: string, body: unknown, o?: { httpMetadata?: { contentType?: string } }) => {
+        // Real R2 rejects streams of unknown length (found in the local wrangler dev run).
+        if (body instanceof ReadableStream) throw new TypeError("stream must have a known length");
         stored[key] = { body, contentType: o?.httpMetadata?.contentType };
       },
       head: async (key: string) => (opts.exists || stored[key] ? {} : null),

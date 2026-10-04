@@ -193,9 +193,20 @@ make cf-test                           # vitest (mocks R2 + Images) and tsc
 make cf-plan                           # bundle + terraform plan (read-only)
 make deploy DEPLOY_TARGET=cloudflare   # test, bundle, terraform apply
 make verify-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev
+make test-e2e-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev   # e2e against the live Worker
 make destroy-gcp CLOUDFLARE_URL=...    # DRY RUN of the GCP teardown; add APPLY=1 to really delete
 make destroy-cloudflare                # DRY RUN of terraform destroy for the Cloudflare side
 ```
+
+Before the first `make deploy DEPLOY_TARGET=cloudflare`, enable R2 once in the Cloudflare dashboard (R2 Object
+Storage > enable). Otherwise the apply fails with API error 10042 "Please enable R2 through the Cloudflare Dashboard".
+
+Thumbnails expire after 7 days (`thumbnail_ttl_days`, an R2 lifecycle rule in `cloudflare/terraform/main.tf`), the same
+as the GCP buckets.
+
+`make test-e2e-cloudflare` (11 tests, `tests/e2e/test_thumbnail_cloudflare.py`) uploads jpeg/png/webp/gif images,
+checks the thumbnail is 200x150 for an 800x600 source, that small images are not upscaled, and the 400/413/415 error
+paths. It also runs against a local `wrangler dev` URL (local R2 + local Images simulation).
 
 Free-tier limits that matter (official docs, read 2026-10-03): 5,000 unique image transformations per
 month (Images), 100,000 Worker requests/day, 10 GB R2 storage.
