@@ -3,4 +3,6 @@ FROM nginx:1.27-alpine
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY index.html /usr/share/nginx/html/index.html
 # Same-origin API path; nginx proxies it (see nginx.conf.template).
-RUN sed -i 's|__GET_UPLOAD_URL_ENDPOINT__|/api|' /usr/share/nginx/html/index.html
+# chmod: the file keeps its host mode (0600 here), which the unprivileged nginx worker cannot read (403).
+RUN sed -i 's|__GET_UPLOAD_URL_ENDPOINT__|/api|' /usr/share/nginx/html/index.html \
+ && chmod 644 /usr/share/nginx/html/index.html
