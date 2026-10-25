@@ -48,3 +48,15 @@
 - **Requirement:** Cloudflare is the only target now; the GCP project was destroyed (`terraform state list` was empty before `terraform/` was deleted).
 - **Removed:** `terraform/`, `functions/`, `main.py`, `requirements.txt`, the GCP e2e/unit tests and the google/flask/cloudevents dependencies. Python stays only for the Cloudflare e2e tests.
 - **Measured after removal:** `make check` (ruff, mypy, 10 unit tests) passes; `make test-e2e-cloudflare` 11 passed against the live Worker.
+
+## Frontend on local Kubernetes (kind), backend stays on the Cloudflare Worker (2026-10-25)
+
+- **Requirement:** experiment with serving the frontend from Kubernetes; the backend does not move. Free, so kind
+  (Kubernetes in Docker) on the Mac, not GKE. The page stays the old `frontend/index.html`; no Astro/TS rewrite.
+- **nginx proxies `/api` to the Worker.** The Worker sends no CORS headers (it used to serve the page itself), so a page
+  on another origin could not read its responses. Proxying keeps the browser on one origin and leaves the backend
+  untouched. Best practice for static page + API on different hosts; the alternative is adding CORS to the Worker.
+- **Plain manifests (`k8s/frontend.yaml`), no Helm in the app.** One Deployment and one Service do not need templating
+  (YAGNI). Helm is taught separately in `docs/helm-course.html`.
+- **Image is loaded into kind (`kind load docker-image`)**, no registry. Access is `kubectl port-forward`, no Ingress.
+- **Unverified:** nothing here was run yet (Docker was stopped, kind and helm not installed when written).

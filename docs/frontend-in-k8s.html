@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Frontend in Kubernetes: how it connects to the backend</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f7f8; --fg:#1a1a1a; --card:#fff; --border:#e0e0e0; --accent:#4f46e5; --muted:#6b7280; --code:#f0f0f3; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14141a; --fg:#e8e8ee; --card:#1d1d26; --border:#33333f; --accent:#8b86ff; --muted:#9aa0ad; --code:#262632; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 800px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.6rem; } h2 { margin-top: 2.5rem; font-size: 1.25rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+  code, pre { background: var(--code); border-radius: 6px; font: 0.88em ui-monospace,Menlo,monospace; }
+  code { padding: .1em .35em; } pre { padding: .8rem 1rem; overflow-x: auto; }
+  .flow { display:flex; flex-direction:column; gap:.4rem; margin:1rem 0; }
+  .box { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:.7rem 1rem; }
+  .box b { color: var(--accent); }
+  .arrow { text-align:center; color:var(--muted); font-size:.9rem; }
+  table { border-collapse: collapse; width:100%; } th, td { border:1px solid var(--border); padding:.4rem .6rem; text-align:left; vertical-align:top; }
+  .note { border-left: 4px solid var(--accent); background: var(--card); padding: .6rem 1rem; border-radius: 0 8px 8px 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Frontend in Kubernetes, backend on Cloudflare: how they connect</h1>
+<p>The upload page runs in a local Kubernetes cluster (<code>kind</code>). The thumbnail work (resize, storage) stays in the Cloudflare
+Worker. This page explains how a click in your browser reaches the Worker and why each piece is there.</p>
+
+<h2>1. The path of one request</h2>
+<div class="flow">
+  <div class="box"><b>Browser</b> at <code>http://localhost:8080</code>. The page calls <code>/api?action=upload</code> on <em>its own address</em>.</div>
+  <div class="arrow">&darr; <code>kubectl port-forward</code> (a tunnel from your Mac into the cluster)</div>
+  <div class="box"><b>Service</b> <code>thumbnail-frontend</code>: a stable name and address that forwards to whichever Pod is alive.</div>
+  <div class="arrow">&darr;</div>
+  <div class="box"><b>Pod</b> running <b>nginx</b> (started by the <b>Deployment</b>, which keeps the wanted number of Pods running).<br />
+    <code>/</code> &rarr; serves <code>index.html</code> &nbsp;|&nbsp; <code>/api...</code> &rarr; forwards to the Worker.</div>
+  <div class="arrow">&darr; HTTPS over the internet (a reverse proxy: nginx makes the call on the browser's behalf)</div>
+  <div class="box"><b>Cloudflare Worker</b> <code>thumbnail-generator.physics-study-dashboards.workers.dev</code>: resizes with the Images binding and stores in R2.</div>
+</div>
+
+<h2>2. The pieces and where they live</h2>
+<table>
+<tr><th>Piece</th><th>File</th><th>What it does</th></tr>
+<tr><td>Page</td><td><code>frontend/index.html</code></td><td>Unchanged UI. The placeholder <code>__GET_UPLOAD_URL_ENDPOINT__</code> becomes <code>/api</code> when the image is built.</td></tr>
+<tr><td>nginx config</td><td><code>frontend/nginx.conf.template</code></td><td>Serves the page and proxies <code>/api</code> to the Worker. <code>${BACKEND_HOST}</code> is filled from an environment variable at container start.</td></tr>
+<tr><td>Image</td><td><code>frontend/Dockerfile</code></td><td>nginx + the page + the config template.</td></tr>
+<tr><td>Cluster objects</td><td><code>k8s/frontend.yaml</code></td><td>Deployment (the Pod) and Service (its stable address). <code>BACKEND_HOST</code> is set here.</td></tr>
+<tr><td>Commands</td><td><code>Makefile</code></td><td><code>make k8s-up</code>, <code>make k8s-open</code>, <code>make k8s-down</code>.</td></tr>
+</table>
+
+<h2>3. How it works in general</h2>
+<p><b>kind</b> ("Kubernetes in Docker") runs a whole cluster as one Docker container on your Mac. A cluster is a set of machines
+(<em>nodes</em>) that run containers for you. You do not start containers yourself. You write <em>desired state</em> in YAML
+("keep 1 copy of this image running") and Kubernetes keeps it true: if the Pod dies, the Deployment starts a new one.</p>
+<p>The image is built locally, so <code>make k8s-up</code> copies it into the kind node with <code>kind load docker-image</code>. There is no
+registry. That is why the manifest uses <code>imagePullPolicy: IfNotPresent</code>.</p>
+<p>A Pod's IP changes every time it is recreated. A <b>Service</b> gives the Pods a fixed name and IP and spreads traffic across them.
+Inside the cluster the name <code>thumbnail-frontend</code> resolves through the cluster's DNS. From your Mac you reach it with
+<code>port-forward</code>; a real cluster would add an Ingress or a LoadBalancer in front.</p>
+
+<h2>4. Why nginx proxies <code>/api</code> (the CORS reason)</h2>
+<p>A browser blocks a page from reading responses of another <em>origin</em> (scheme + host + port) unless that server sends CORS
+headers (<em>Cross-Origin Resource Sharing</em>). The page is at <code>localhost:8080</code>; the Worker is at <code>workers.dev</code>: different origins.
+The Worker sends no CORS headers, because until now the page was served by the Worker itself.</p>
+<p>With the proxy, the browser only ever talks to <code>localhost:8080</code>. nginx makes the call to the Worker from the server side, where CORS does not apply.
+The Worker needs no change.</p>
+
+<h2>5. Is nginx really necessary?</h2>
+<div class="note">
+<b>For serving the page alone: no.</b> It is one static file, so any static file server would do (Caddy, a 10-line Go binary, <code>python -m http.server</code>).
+Even the Worker already serves this same page.<br /><br />
+<b>Here it earns its place for the proxy.</b> The alternatives are all more work:
+</div>
+<table>
+<tr><th>Alternative</th><th>Cost</th></tr>
+<tr><td>Add CORS headers to the Worker and let the page call the Worker URL directly</td><td>Edit and redeploy the backend; the URL is baked into the page. Then any static server works and nginx is not needed.</td></tr>
+<tr><td>Ingress controller routing <code>/api</code> to an <code>ExternalName</code> Service</td><td>Install an Ingress controller in kind (extra moving part) and still deal with the <code>Host</code> header.</td></tr>
+<tr><td>Skip Kubernetes; use the Worker's own page</td><td>Simplest in production. The point of this branch is to learn Kubernetes, so it is the opposite of the experiment.</td></tr>
+</table>
+<p>So: nginx is the smallest way to keep the backend untouched. If you later add CORS to the Worker, you can swap nginx for any static server.</p>
+
+<h2>6. Try it</h2>
+<pre>make k8s-up       # create the cluster, build + load the image, apply k8s/
+make k8s-open     # http://localhost:8080 (Ctrl-C to stop)
+kubectl --context kind-thumbnail get pods,svc
+kubectl --context kind-thumbnail logs deploy/thumbnail-frontend    # nginx access log: see /api requests
+make k8s-down</pre>
+<p>Needs Docker running, plus <code>kind</code> and <code>kubectl</code> (<code>brew install kind</code>).</p>
+</main>
+</body>
+</html>

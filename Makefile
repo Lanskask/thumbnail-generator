@@ -1,4 +1,4 @@
-.PHONY: help install test test-unit test-e2e-cloudflare lint format typecheck check \
+.PHONY: k8s-up k8s-open k8s-down helpinstall test test-unit test-e2e-cloudflare lint format typecheck check \
         deploy deploy-cloudflare cf-install cf-test cf-build cf-plan verify-cloudflare destroy-cloudflare
 
 DEPLOY_TARGET ?= cloudflare
@@ -28,6 +28,11 @@ help:
 	@echo "  make cf-plan                         terraform plan for the Cloudflare resources (read-only)"
 	@echo "  make deploy DEPLOY_TARGET=cloudflare bundle, then terraform apply (creates the R2 bucket + Worker)"
 	@echo "  make verify-cloudflare CLOUDFLARE_URL=https://...   upload API answers"
+	@echo ""
+	@echo "Frontend on local Kubernetes (kind, needs docker, kind, kubectl):"
+	@echo "  make k8s-up        create the kind cluster, build the nginx image, load it, apply k8s/"
+	@echo "  make k8s-open      port-forward the frontend to http://localhost:8080 (Ctrl-C to stop)"
+	@echo "  make k8s-down      delete the kind cluster"
 
 install:
 	poetry install
@@ -97,3 +102,21 @@ verify-cloudflare:
 # Delete the Cloudflare Worker + R2 bucket (Terraform). Dry run unless APPLY=1.
 destroy-cloudflare:
 	@scripts/guard-destroy.sh cloudflare thumbnail-generator "cd cloudflare/terraform && terraform destroy"
+
+
+# ---------------------------------------------------------------------------
+# Frontend on local Kubernetes (kind). Free: everything runs in Docker on this machine.
+# ---------------------------------------------------------------------------
+k8s-up:
+	kind get clusters | grep -qx thumbnail || kind create cluster --name thumbnail
+	docker build -t thumbnail-frontend:dev frontend
+	kind load docker-image thumbnail-frontend:dev --name thumbnail
+	kubectl --context kind-thumbnail apply -f k8s/
+	kubectl --context kind-thumbnail rollout restart deployment/thumbnail-frontend
+	kubectl --context kind-thumbnail rollout status deployment/thumbnail-frontend
+
+k8s-open:
+	kubectl --context kind-thumbnail port-forward svc/thumbnail-frontend 8080:80
+
+k8s-down:
+	kind delete cluster --name thumbnail

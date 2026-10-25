@@ -116,3 +116,16 @@ This deletes the Worker and the R2 bucket with its thumbnails. Terraform state i
   (guessable only with effort, but not a secret).
 - Thumbnails expire after 7 days (`thumbnail_ttl_days`, an R2 lifecycle rule), which also keeps storage bounded.
 - The Cloudflare token lives only in your environment, not in `terraform.tfvars` or the repo.
+
+## Frontend on local Kubernetes (experiment, branch `k8s-astro-frontend`)
+
+The same upload page can be served from a local kind cluster (nginx in a Pod) while the backend stays on the Worker.
+Needs Docker, `kind` and `kubectl`.
+
+```
+make k8s-up      # cluster + image + manifests from k8s/
+make k8s-open    # http://localhost:8080
+make k8s-down    # delete the cluster
+```
+
+How the pieces connect: `docs/frontend-in-k8s.html`. Helm course with exercises: `docs/helm-course.html`.

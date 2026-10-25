@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thumbnail-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: thumbnail-frontend
+  template:
+    metadata:
+      labels:
+        app: thumbnail-frontend
+    spec:
+      containers:
+        - name: nginx
+          image: thumbnail-frontend:dev
+          imagePullPolicy: IfNotPresent # the image is loaded into kind, never pulled
+          ports:
+            - containerPort: 80
+          env:
+            - name: BACKEND_HOST
+              value: thumbnail-generator.physics-study-dashboards.workers.dev
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thumbnail-frontend
+spec:
+  selector:
+    app: thumbnail-frontend
+  ports:
+    - port: 80
+      targetPort: 80
