@@ -1,179 +1,131 @@
-# Thumbnail Generator — Web Upload + Cloud Function (GCP Always Free tier)
+# Thumbnail Generator — web upload on Cloudflare (Workers + R2 + Images, free tier)
 
-A small full-stack serverless project, deployed entirely with Terraform:
+A small serverless project, deployed entirely with Terraform:
 
-- A **static upload webpage** (drag-and-drop an image)
-- A **Cloud Function** that issues short-lived signed URLs so the browser can
-  upload directly to Cloud Storage and poll for the result
-- A **Cloud Function** triggered by new uploads that generates a 200x200
-  thumbnail
-- All infrastructure defined as code, no manual clicking in the console
+- A **static upload page** (drag and drop an image), bundled into the Worker.
+- A **Worker** that accepts the image, resizes it to at most 200x200 and stores the thumbnail.
+- An **R2 bucket** holding the thumbnails; they expire after 7 days.
+
+It used to run on GCP (Cloud Functions + Cloud Storage). That stack was destroyed and removed on 2026-10-04;
+the history is in git and the reasoning in `DECISIONS.md`.
 
 ## Architecture
 
 ```
-                 ┌─────────────────────────────┐
-   Browser  ---> │  GCS static website bucket   │  (index.html, public read)
-                 └─────────────────────────────┘
-                              │
-                 (1) POST ?action=upload
-                              v
-                 ┌─────────────────────────────┐
-                 │ Cloud Function: get-upload-  │  HTTP, unauthenticated
-                 │ url  (mints V4 signed URLs)  │
-                 └─────────────────────────────┘
-                              │
-                 (2) returns a signed PUT URL
-                              v
-   Browser  --- PUT image bytes directly ---> gs://<src bucket>
-                              │
-                 (3) GCS "finalize" event (Eventarc)
-                              v
-                 ┌─────────────────────────────┐
-                 │ Cloud Function:              │  event-triggered
-                 │ make-thumbnail (Pillow)      │
-                 └─────────────────────────────┘
-                              │
-                 (4) writes thumb_<name>
-                              v
-                        gs://<dest bucket>
-                              │
-                 (5) Browser polls get-upload-url ?action=download
-                     until the signed GET URL resolves
-                              v
-                       Thumbnail displayed
+Browser ──(1) POST /api?action=upload {filename, contentType}──────────▶ Worker
+        ◀──────── {uploadUrl: /api/put/<name>, objectName} ─────────────
+Browser ──(2) PUT /api/put/<name>  raw image bytes ────────────────────▶ Worker
+                                    Images binding resizes (<=200x200, never enlarged)
+                                    stores thumb_<name> in R2
+Browser ──(3) GET /api?action=download&objectName=<name> (poll) ───────▶ Worker ── R2
+        ◀──────── {exists, downloadUrl: /api/thumb/thumb_<name>} ───────
+Browser ──(4) GET /api/thumb/thumb_<name> ─────────────────────────────▶ Worker ── R2
 ```
 
-No file bytes ever pass through a server you pay per-request/per-CPU-second
-for beyond the two lightweight function invocations — the actual upload and
-download happen directly between the browser and Cloud Storage via signed
-URLs.
+The resize happens inside the PUT request, so there is no event trigger, no signed URL and no secret.
+Workers cannot run Pillow (a native Python extension); the **Images binding** does the resize with no library shipped.
+Accepted types: PNG, JPEG, GIF, WebP (a GIF comes back as PNG), at most 10 MB. Filenames are sanitised before use
+as object names.
 
-## Why this stays in the Always Free tier
+## Free-tier limits that matter
 
-| Resource | Always Free allowance | This project's usage |
+Read from the official Cloudflare docs on 2026-10-03 (not re-checked since):
+
+| Resource | Free allowance | Effect here |
 |---|---|---|
-| Cloud Functions (2nd gen, backed by Cloud Run) | 2M invocations/mo, 400,000 GB-seconds, 200,000 GHz-seconds compute | 2 invocations per upload (get URL + generate thumbnail) |
-| Cloud Storage | 5 GB-months (US regions), 5,000 Class A + 50,000 Class B ops/mo | 3 small buckets; uploads auto-expire after 7 days |
-| Network egress | 5 GB/month (excl. China/Australia) | Only when viewing thumbnails/frontend |
-| Eventarc / Pub/Sub | 10 GB/mo message delivery free | One event per upload |
+| Images transformations | 5,000 unique per month | the 5,001st new thumbnail in a month fails (no charge) |
+| Workers requests | 100,000 per day, 10 ms CPU each | about 3 requests per upload |
+| R2 storage | 10 GB-month, 1M writes, 10M reads | thumbnails are tiny and expire after 7 days |
 
-Realistic personal/demo use (dozens to low hundreds of uploads) will not
-incur any charge. Heavy traffic (many thousands of large images) could.
-Set a budget alert (see below) to be sure.
+Fine for a demo; a public tool with heavy traffic would hit the Images cap first.
 
 ## Prerequisites
 
-1. **MFA enabled** on your Google account — required for any Cloud Console/API
-   access since May 2025: <https://myaccount.google.com/signinoptions/two-step-verification>
-2. **A GCP project with a billing account linked** (required to enable APIs,
-   even for free-tier-only usage):
-   ```
-   gcloud projects create YOUR_PROJECT_ID --name="Thumbnail Demo"
-   gcloud billing projects link YOUR_PROJECT_ID --billing-account=YOUR_BILLING_ACCOUNT_ID
-   ```
-3. **Terraform** >= 1.5: <https://developer.hashicorp.com/terraform/install>
-4. **gcloud CLI**, authenticated with Application Default Credentials:
-   ```
-   gcloud auth login
-   gcloud auth application-default login
-   ```
+1. **Terraform** >= 1.5 and **bun** (for the Worker's tests and the esbuild bundle). Poetry is only needed for the
+   Python e2e tests.
+2. **A Cloudflare API token** with *Workers Scripts: Edit* and *Workers R2 Storage: Edit*, exported as
+   `CLOUDFLARE_API_TOKEN`.
+3. **R2 enabled once** in the dashboard (R2 Object Storage, enable). Otherwise the apply fails with API error 10042
+   "Please enable R2 through the Cloudflare Dashboard".
+4. Your account ID in `cloudflare/terraform/terraform.tfvars` (copy `terraform.tfvars.example`; keep only
+   `account_id` in it, the token stays in the environment).
 
-## Deploy
+## Everyday commands
 
 ```
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars with your project ID
-
-terraform init
-terraform plan
-terraform apply
+make cf-install                        # bun install in cloudflare/
+make cf-test                           # vitest (mocked R2 + Images) and tsc
+make cf-build                          # esbuild bundle -> cloudflare/build/index.js (Terraform does not compile TypeScript)
+make cf-plan                           # bundle + terraform plan (read-only)
+make deploy                            # test, bundle, terraform apply (creates the bucket and Worker)
+make verify-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev
+make test-e2e-cloudflare CLOUDFLARE_URL=https://thumbnail-generator.<subdomain>.workers.dev
+make destroy-cloudflare                # DRY RUN of terraform destroy; add APPLY=1 to delete
+make install && make check             # Python side: ruff, mypy, unit tests of the e2e helpers
 ```
 
-Terraform will:
-- Enable all required APIs
-- Create 4 buckets: source uploads, thumbnail output, function source, and
-  the public frontend
-- Deploy both Cloud Functions with least-privilege service accounts
-- Render `frontend/index.html` with the deployed function URL baked in and
-  upload it to the public bucket
+The URL is `https://<worker_name>.<your-account-subdomain>.workers.dev` (`terraform output url_hint`; the subdomain is
+shown in the dashboard under Workers & Pages). Current deployment:
+<https://thumbnail-generator.physics-study-dashboards.workers.dev>
 
-When it finishes, `terraform output frontend_url` gives you the page to open.
+## Tests
 
-## Test
+| Level | Command | What it covers |
+|---|---|---|
+| Worker unit | `make cf-test` | 9 vitest tests with mocked R2 and Images, plus `tsc --noEmit` |
+| Helper unit | `make test-unit` | Python test-image helpers (`tests/unit/test_images.py`) |
+| End to end | `make test-e2e-cloudflare CLOUDFLARE_URL=...` | 11 tests in `tests/e2e/test_thumbnail_cloudflare.py` |
 
-Open the `frontend_url` output in a browser, drop in an image, and watch it
-resize.
-
-Or from the CLI:
-```
-curl -X POST "$(terraform output -raw get_upload_url_function_url)?action=upload" \
-  -H "Content-Type: application/json" \
-  -d '{"filename":"test.jpg","contentType":"image/jpeg"}'
-# then PUT the file to the returned uploadUrl, and poll ?action=download
-```
-
-## Type checking
-
-Both Cloud Function sources are fully typed (`from __future__ import
-annotations`, typed signatures throughout) and pass `mypy --ignore-missing-imports`
-cleanly. If you modify them:
-```
-pip install mypy functions-framework google-cloud-storage Pillow flask cloudevents
-mypy --ignore-missing-imports functions/make_thumbnail/main.py
-mypy --ignore-missing-imports functions/get_upload_url/main.py
-```
+The e2e tests upload JPEG, PNG, WebP and GIF images and check that an 800x600 source gives a 200x150 thumbnail, that
+small images are not upscaled, and the 400/413/415 error paths. They run against the live Worker (11 passed on
+2026-10-04) or against a local `wrangler dev` URL, which simulates R2 and Images locally. They skip when
+`CLOUDFLARE_URL` is unset.
 
 ## Files
 
 ```
-terraform/           All infrastructure as code
-  versions.tf           Provider requirements
-  variables.tf          project_id, region, name_prefix
-  apis.tf                Enables required GCP APIs
-  storage.tf             3 buckets: source, dest, frontend
-  functions_source.tf    Zips + uploads function source
-  iam.tf                 Service accounts + least-privilege bindings
-  functions.tf            Both Cloud Functions (gen2)
-  frontend_render.tf     Bakes the function URL into index.html at apply time
-  outputs.tf             frontend_url, function URLs, bucket names
-  terraform.tfvars.example
-
-functions/
-  make_thumbnail/       Event-triggered: resizes uploaded images
-  get_upload_url/       HTTP: issues signed upload/download URLs
-
-frontend/
-  index.html            Upload UI (vanilla HTML/CSS/JS, no build step)
+cloudflare/
+  src/index.ts            request handling (upload, put, download, thumb routes)
+  src/worker.ts           esbuild entry; exports only the default handler (the runtime rejects other exports)
+  src/frontend.generated.ts   frontend/index.html as a string (generated by scripts/gen-frontend.mjs, gitignored)
+  test/                   vitest unit tests
+  terraform/              provider cloudflare/cloudflare ~> 5.0
+    main.tf                 R2 bucket, 7-day lifecycle rule, Worker, version with bindings THUMBS (R2) + IMAGES, deployment
+    variables.tf            account_id, thumbnail_ttl_days (default 7), names
+    outputs.tf              worker_name, bucket_name, url_hint
+frontend/index.html       upload UI (vanilla HTML/CSS/JS, no build step)
+tests/                    Python e2e tests, helpers and their unit tests
+scripts/guard-destroy.sh  guard used by `make destroy-cloudflare`
 ```
 
 ## Tear down
 
 ```
-cd terraform
-terraform destroy
+make destroy-cloudflare                # prints the plan only
+APPLY=1 make destroy-cloudflare        # runs terraform destroy after you type the Worker name
 ```
 
-This deletes every resource Terraform created — functions, buckets (and
-their contents, via `force_destroy`), and service accounts.
-
-## Monitoring usage / staying free
-
-- Billing reports: <https://console.cloud.google.com/billing/reports>
-- Set a budget alert (e.g. at $1) so you get an email before anything is
-  ever actually charged: <https://console.cloud.google.com/billing/budgets>
+This deletes the Worker and the R2 bucket with its thumbnails. Terraform state is local
+(`cloudflare/terraform/terraform.tfstate`, gitignored): keep it until the destroy finishes.
 
 ## Security notes
 
-- The `get-upload-url` function allows unauthenticated invocation because it
-  only *mints signed URLs* — it never touches file bytes itself, and each
-  signed URL expires in 10 minutes and is scoped to one object.
-- `ALLOWED_ORIGIN` is set to `*` for CORS because GCS static website buckets
-  don't have a fixed custom-domain origin out of the box. If you later put
-  this behind Cloud CDN / a custom domain, tighten `ALLOWED_ORIGIN` in
-  `terraform/functions.tf` to that exact origin.
-- Uploaded files are restricted by content-type (PNG/JPEG/GIF/WebP only) and
-  filenames are sanitized before use as object names.
-- Raw uploads auto-delete after 7 days via a lifecycle rule, keeping storage
-  usage (and therefore cost risk) bounded automatically.
+- The upload API is unauthenticated, as before. Abuse is bounded by the free-tier caps (no charge past them, requests just
+  fail) and by the 10 MB size limit and content-type allow-list.
+- Thumbnails are readable by anyone who knows the object name; names contain a timestamp and 8 random hex characters
+  (guessable only with effort, but not a secret).
+- Thumbnails expire after 7 days (`thumbnail_ttl_days`, an R2 lifecycle rule), which also keeps storage bounded.
+- The Cloudflare token lives only in your environment, not in `terraform.tfvars` or the repo.
+
+## Frontend on local Kubernetes (experiment, branch `k8s-astro-frontend`)
+
+The same upload page can be served from a local kind cluster (nginx in a Pod) while the backend stays on the Worker.
+Needs Docker, `kind` and `kubectl`.
+
+```
+make k8s-up      # cluster + image + manifests from k8s/
+make k8s-open    # http://localhost:8080
+make k8s-down    # delete the cluster
+```
+
+How the pieces connect: `docs/frontend-in-k8s.html`. Helm course with exercises: `docs/helm-course.html`.

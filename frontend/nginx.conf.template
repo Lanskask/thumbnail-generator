@@ -1,0 +1,19 @@
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+
+    # Matches the Worker's 10 MB image limit, plus headroom for the request framing.
+    client_max_body_size 11m;
+
+    # The page calls /api on its own origin; nginx forwards it to the Worker, so the browser never
+    # makes a cross-origin request and the Worker needs no CORS headers.
+    location /api {
+        proxy_pass https://${BACKEND_HOST};
+        proxy_ssl_server_name on;
+        proxy_set_header Host ${BACKEND_HOST};
+    }
+
+    location / {
+        try_files $uri /index.html;
+    }
+}

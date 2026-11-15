@@ -1,6 +1,0 @@
-# Copy this file to terraform.tfvars and fill in your project ID.
-# terraform.tfvars is gitignored by default in most setups — don't commit
-# secrets, though nothing here is actually secret.
-
-project_id = "your-gcp-project-id"
-region     = "us-central1"

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Helm: a hands-on course</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f7f7f8; --fg:#1a1a1a; --card:#fff; --border:#e0e0e0; --accent:#4f46e5; --muted:#6b7280; --code:#f0f0f3; --ok:#15803d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14141a; --fg:#e8e8ee; --card:#1d1d26; --border:#33333f; --accent:#8b86ff; --muted:#9aa0ad; --code:#262632; --ok:#4ade80; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  main { max-width: 800px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  h1 { font-size: 1.7rem; } h2 { margin-top: 2.5rem; font-size: 1.3rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+  code, pre { background: var(--code); border-radius: 6px; font: 0.88em ui-monospace,Menlo,monospace; }
+  code { padding: .1em .35em; } pre { padding: .8rem 1rem; overflow-x: auto; }
+  nav { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: .5rem 1.2rem; }
+  .ex { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: .2rem 1rem .6rem; margin: 1rem 0; }
+  .ex h3 { margin: .6rem 0 .2rem; font-size: 1rem; color: var(--accent); }
+  .check { color: var(--ok); font-weight: 600; }
+  details { margin-top: .5rem; } summary { cursor: pointer; color: var(--muted); }
+  table { border-collapse: collapse; width:100%; } th, td { border:1px solid var(--border); padding:.4rem .6rem; text-align:left; vertical-align:top; }
+</style>
+</head>
+<body>
+<main>
+<h1>Helm: a hands-on course</h1>
+<p>Six short lessons, each with an exercise. You work on a local <code>kind</code> cluster, and the final project turns this repo's
+<code>k8s/frontend.yaml</code> into a real chart. Solutions are hidden under "Show solution": try first.</p>
+<p><b>Note:</b> written from my knowledge of Helm 3 and not run end to end yet. If a command differs on your version,
+<code>helm &lt;command&gt; --help</code> is the truth.</p>
+
+<nav>
+<ol>
+  <li><a href="#l0">Setup</a></li>
+  <li><a href="#l1">What Helm is, and your first release</a></li>
+  <li><a href="#l2">Templates and values</a></li>
+  <li><a href="#l3">Build the thumbnail-frontend chart</a></li>
+  <li><a href="#l4">Upgrade, history, rollback</a></li>
+  <li><a href="#l5">Conditionals, helpers, and an optional Ingress</a></li>
+  <li><a href="#l6">Lint, package, and where to go next</a></li>
+</ol>
+</nav>
+
+<h2 id="l0">0. Setup</h2>
+<pre>brew install kind helm
+open -a Docker           # start Docker Desktop
+make k8s-up              # cluster "thumbnail" + the image thumbnail-frontend:dev loaded into it
+helm version
+kubectl --context kind-thumbnail get nodes</pre>
+<p>Every <code>kubectl</code> and <code>helm</code> command below needs the cluster context. Set it once for the shell:</p>
+<pre>kubectl config use-context kind-thumbnail</pre>
+<div class="ex"><h3>Check</h3><p>You see one node in state <code>Ready</code>, and <code>helm version</code> prints <code>v3.x</code>.</p></div>
+
+<h2 id="l1">1. What Helm is, and your first release</h2>
+<p>Plain Kubernetes YAML is fixed text. To run the same app twice (say <em>dev</em> with 1 copy and <em>prod</em> with 3) you would copy the files and edit them.
+<b>Helm</b> is a package manager for Kubernetes: it turns YAML into <b>templates</b> with blanks, and fills the blanks from <b>values</b>.</p>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td>Chart</td><td>A folder: templates + default values + metadata. The "package".</td></tr>
+<tr><td>Release</td><td>One installation of a chart in a cluster, with a name. Installing the same chart twice gives two releases.</td></tr>
+<tr><td>Values</td><td>The settings you give the templates (<code>values.yaml</code>, <code>-f file</code>, <code>--set key=val</code>).</td></tr>
+<tr><td>Revision</td><td>Each install or upgrade of a release is a numbered revision. That is what makes rollback possible.</td></tr>
+</table>
+<p>Helm 3 has no server part: the <code>helm</code> program talks to the cluster with your kubeconfig and keeps release records as Secrets in the namespace.</p>
+
+<div class="ex">
+<h3>Exercise 1: scaffold and install a chart</h3>
+<pre>mkdir -p ~/helm-course && cd ~/helm-course
+helm create hello
+ls hello hello/templates
+helm install hello1 ./hello
+helm list
+kubectl get pods,svc</pre>
+<ol>
+<li>Which files did <code>helm create</code> make? What is the name of the Pod?</li>
+<li>Reach the app: <code>kubectl port-forward svc/hello1-hello 8081:80</code>, then open <code>http://localhost:8081</code>.</li>
+<li>Remove it: <code>helm uninstall hello1</code>. What happened to the Pods?</li>
+</ol>
+<details><summary>Show solution</summary>
+<p>The Pod is named like <code>hello1-hello-&lt;hash&gt;</code>: the release name is part of every object's name. That is how two releases of one chart avoid colliding. You see the nginx welcome page. After <code>uninstall</code>, every object the release created is deleted, because Helm remembers what it created.</p>
+</details></div>
+
+<h2 id="l2">2. Templates and values</h2>
+<p>Look at <code>hello/templates/deployment.yaml</code>. Pieces between <code>{{ }}</code> are Go template actions. The ones you need first:</p>
+<table>
+<tr><th>Expression</th><th>Gives</th></tr>
+<tr><td><code>{{ .Values.replicaCount }}</code></td><td>A value from <code>values.yaml</code> (or an override)</td></tr>
+<tr><td><code>{{ .Release.Name }}</code></td><td>The name you gave at <code>helm install</code></td></tr>
+<tr><td><code>{{ .Chart.Name }}</code>, <code>{{ .Chart.AppVersion }}</code></td><td>Fields of <code>Chart.yaml</code></td></tr>
+<tr><td><code>{{ .Values.image.tag | default .Chart.AppVersion }}</code></td><td>A pipe: use the tag, or the fallback if empty</td></tr>
+<tr><td><code>{{ .Values.x | quote }}</code></td><td>Wraps in quotes (important for strings that look like numbers)</td></tr>
+</table>
+<p>Override order, lowest to highest: chart's <code>values.yaml</code>, then <code>-f file.yaml</code>, then <code>--set</code>.</p>
+<p>Rendering without touching the cluster is the most useful debugging tool you have: <code>helm template</code>.</p>
+
+<div class="ex">
+<h3>Exercise 2: see what values do</h3>
+<pre>helm template demo ./hello | head -60
+helm template demo ./hello --set replicaCount=3 | grep replicas
+helm template demo ./hello --set image.tag=1.27 | grep image:
+printf 'replicaCount: 2\n' > my-values.yaml
+helm template demo ./hello -f my-values.yaml --set replicaCount=5 | grep replicas</pre>
+<ol>
+<li>What is the last command's replica count, and why?</li>
+<li>Run <code>helm install demo ./hello --dry-run --debug</code>. What does it print that <code>template</code> does not?</li>
+</ol>
+<details><summary>Show solution</summary>
+<p>1. <b>5</b>: <code>--set</code> beats <code>-f</code>, which beats the chart default.
+2. It also prints the computed values and the release metadata, and it asks the cluster to validate the objects, so it catches errors that <code>template</code> cannot.</p>
+</details></div>
+
+<h2 id="l3">3. Build the thumbnail-frontend chart</h2>
+<p>Now the real thing. Turn <code>k8s/frontend.yaml</code> into a chart with three knobs: replicas, image, and the backend host.</p>
+
+<div class="ex">
+<h3>Exercise 3</h3>
+<p>From the repo root, create <code>charts/thumbnail-frontend/</code> with:</p>
+<ul>
+<li><code>Chart.yaml</code>: <code>apiVersion: v2</code>, a name, <code>version: 0.1.0</code>, <code>appVersion: "dev"</code></li>
+<li><code>values.yaml</code>: <code>replicaCount</code>, <code>image.repository</code>, <code>image.tag</code>, <code>backendHost</code></li>
+<li><code>templates/deployment.yaml</code> and <code>templates/service.yaml</code>: the two objects from <code>k8s/frontend.yaml</code>, with names starting from <code>{{ .Release.Name }}</code></li>
+</ul>
+<p>Install as release <code>fe</code>, forward its Service to port 8082, and upload an image through the page.</p>
+<p class="check">Check: <code>helm list</code> shows <code>fe</code> as deployed, and the page works at http://localhost:8082.</p>
+<details><summary>Show solution</summary>
+<pre># charts/thumbnail-frontend/Chart.yaml
+apiVersion: v2
+name: thumbnail-frontend
+description: nginx serving the upload page and proxying /api to the Cloudflare Worker
+version: 0.1.0
+appVersion: "dev"
+
+# charts/thumbnail-frontend/values.yaml
+replicaCount: 1
+image:
+  repository: thumbnail-frontend
+  tag: dev
+backendHost: thumbnail-generator.physics-study-dashboards.workers.dev
+
+# charts/thumbnail-frontend/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-frontend
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-frontend
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-frontend
+    spec:
+      containers:
+        - name: nginx
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          env:
+            - name: BACKEND_HOST
+              value: {{ .Values.backendHost | quote }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+
+# charts/thumbnail-frontend/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-frontend
+spec:
+  selector:
+    app: {{ .Release.Name }}-frontend
+  ports:
+    - port: 80
+      targetPort: 80</pre>
+<pre>helm install fe charts/thumbnail-frontend
+kubectl port-forward svc/fe-frontend 8082:80</pre>
+<p>The release is called <code>fe</code>, so the objects are <code>fe-frontend</code>, not <code>thumbnail-frontend</code>. That avoids a clash with the
+plain-YAML copy from <code>make k8s-up</code>; Helm refuses to take over objects it did not create.</p>
+</details></div>
+
+<h2 id="l4">4. Upgrade, history, rollback</h2>
+<p><code>helm upgrade</code> re-renders the chart with new values and applies the difference, creating a new <b>revision</b>. Helm keeps the old ones.</p>
+
+<div class="ex">
+<h3>Exercise 4</h3>
+<pre>helm upgrade fe charts/thumbnail-frontend --set replicaCount=3
+kubectl get pods -l app=fe-frontend
+helm upgrade fe charts/thumbnail-frontend --set backendHost=does-not-exist.invalid
+helm history fe
+helm get values fe</pre>
+<ol>
+<li>Open the page and upload an image. What breaks, and where do you see it? (hint: <code>kubectl logs deploy/fe-frontend</code>)</li>
+<li>Undo the bad change: <code>helm rollback fe 2</code>. Then run <code>helm history fe</code>: how many revisions are there now?</li>
+<li>Why did the second upgrade reset <code>replicaCount</code> to 1?</li>
+</ol>
+<details><summary>Show solution</summary>
+<p>1. nginx cannot resolve the host, so <code>/api</code> returns 502 Bad Gateway; the log shows the "could not be resolved" error.
+(Because nginx resolves the name at start, the new Pods may even fail to become ready; <code>kubectl get pods</code> shows that.)</p>
+<p>2. Four: a rollback is itself a new revision (4) that copies revision 2.</p>
+<p>3. <code>--set</code> only applies to that one command. Helm does not remember it unless you pass <code>--reuse-values</code>. The reliable habit is a values file (<code>-f prod.yaml</code>) kept in git, so every upgrade states the full desired setup.</p>
+</details></div>
+
+<h2 id="l5">5. Conditionals, helpers, and an optional Ingress</h2>
+<p>Templates can branch and loop. Two things to learn:</p>
+<pre>{{- if .Values.ingress.enabled }}
+...an Ingress object...
+{{- end }}</pre>
+<p>The <code>-</code> in <code>{{-</code> trims the blank line before it, which keeps the YAML valid. Repeated text goes in a <b>named template</b> in
+<code>templates/_helpers.tpl</code> (files starting with <code>_</code> produce no object):</p>
+<pre>{{- define "thumbnail-frontend.fullname" -}}
+{{ .Release.Name }}-frontend
+{{- end }}</pre>
+<p>Use it with <code>{{ include "thumbnail-frontend.fullname" . }}</code>. The trailing <code>.</code> passes the current context.</p>
+
+<div class="ex">
+<h3>Exercise 5</h3>
+<ol>
+<li>Add <code>_helpers.tpl</code> with the helper above, and replace the four copies of <code>{{ .Release.Name }}-frontend</code> with <code>include</code>.</li>
+<li>Add <code>templates/ingress.yaml</code> that renders only when <code>ingress.enabled</code> is true (default <code>false</code> in <code>values.yaml</code>), with host from <code>ingress.host</code>.</li>
+<li>Check with <code>helm template fe charts/thumbnail-frontend</code> that there is no Ingress, and with <code>--set ingress.enabled=true --set ingress.host=thumb.local</code> that there is exactly one.</li>
+</ol>
+<details><summary>Show solution</summary>
+<pre># values.yaml (add)
+ingress:
+  enabled: false
+  host: thumb.local
+
+# templates/ingress.yaml
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "thumbnail-frontend.fullname" . }}
+spec:
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "thumbnail-frontend.fullname" . }}
+                port:
+                  number: 80
+{{- end }}</pre>
+<p>An Ingress only does something if an Ingress controller (for example ingress-nginx) runs in the cluster, which a fresh kind cluster does not have.
+So the object renders and applies, but nothing serves it. That is why the switch defaults to off.</p>
+</details></div>
+
+<h2 id="l6">6. Lint, package, and where to go next</h2>
+<div class="ex">
+<h3>Exercise 6</h3>
+<pre>helm lint charts/thumbnail-frontend
+helm package charts/thumbnail-frontend          # -> thumbnail-frontend-0.1.0.tgz
+helm install fe2 ./thumbnail-frontend-0.1.0.tgz --set replicaCount=2
+helm list
+helm uninstall fe fe2</pre>
+<ol>
+<li>Make <code>helm lint</code> fail on purpose (break the indentation in a template). What does it say?</li>
+<li>Install the chart twice (<code>fe</code> and <code>fe2</code>). Why do they not collide?</li>
+<li>Add a Makefile target <code>helm-up</code> that runs <code>helm upgrade --install fe charts/thumbnail-frontend</code>. Why is <code>upgrade --install</code> preferable to plain <code>install</code> in scripts?</li>
+</ol>
+<details><summary>Show solution</summary>
+<p>2. Every object name starts with the release name. 3. It installs if the release is missing and upgrades if present, so the same command works the first and the hundredth time.</p>
+</details></div>
+
+<h3>Cheat sheet</h3>
+<table>
+<tr><td><code>helm create NAME</code></td><td>scaffold a chart</td></tr>
+<tr><td><code>helm template REL CHART</code></td><td>render locally, no cluster</td></tr>
+<tr><td><code>helm lint CHART</code></td><td>check for mistakes</td></tr>
+<tr><td><code>helm upgrade --install REL CHART -f values.yaml</code></td><td>install or update</td></tr>
+<tr><td><code>helm list</code>, <code>helm history REL</code>, <code>helm get values REL</code>, <code>helm get manifest REL</code></td><td>inspect</td></tr>
+<tr><td><code>helm rollback REL REVISION</code></td><td>go back</td></tr>
+<tr><td><code>helm uninstall REL</code></td><td>delete everything the release made</td></tr>
+</table>
+<p><b>Next topics</b>: chart dependencies (<code>dependencies:</code> in <code>Chart.yaml</code>, <code>helm dependency update</code>), repositories (<code>helm repo add</code>, <code>helm search repo</code>, <code>helm show values</code>),
+hooks (jobs that run before or after install), <code>helm test</code>, and secrets handling (never put real secrets in <code>values.yaml</code> committed to git).</p>
+</main>
+</body>
+</html>
